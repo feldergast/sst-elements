@@ -37,6 +37,7 @@ namespace Merlin {
 
 class topo_dragonfly_event;
 
+namespace Dragonfly {
 
 /* Assumed connectivity of each router:
  * ports [0, p-1]:      Hosts
@@ -86,7 +87,7 @@ struct RouterPortPair : public SST::Core::Serialization::serializable {
     }
 
 private:
-    ImplementSerializable(SST::Merlin::RouterPortPair)
+    ImplementSerializable(SST::Merlin::Dragonfly::RouterPortPair)
 
 };
 
@@ -171,7 +172,7 @@ public:
     }
 };
 
-
+} // namespace Dragonfly
 
 class topo_dragonfly: public Topology {
 
@@ -217,10 +218,10 @@ public:
         MIN_A
     };
 
-    RouteToGroup group_to_global_port;
+    Dragonfly::RouteToGroup group_to_global_port;
 
 
-    struct dgnflyParams params;
+    struct Dragonfly::dgnflyParams params;
     double adaptive_threshold;
     uint32_t group_id;
     // Router id within group
@@ -236,7 +237,7 @@ public:
     int num_vcs;
     int num_vns;
 
-    global_route_mode_t global_route_mode;
+    Dragonfly::global_route_mode_t global_route_mode;
 
 public:
     struct dgnflyAddr {

@@ -25,7 +25,7 @@ class topoHyperX(Topology):
     def __init__(self):
         Topology.__init__(self)
         self._declareClassVariables(["link_latency","host_link_latency","bundleEndpoints","_num_dims","_dim_size","_dim_width"])
-        self._declareParams("main",["shape", "width", "local_ports","algorithm"])
+        self._declareParams("main",["shape", "width", "local_ports","algorithm","config_failed_links","failed_links"])
         self._setCallbackOnWrite("shape",self._shape_callback)
         self._setCallbackOnWrite("width",self._shape_callback)
         self._setCallbackOnWrite("local_ports",self._shape_callback)
@@ -79,6 +79,12 @@ class topoHyperX(Topology):
         this.width = width
         this.local_ports = local_ports
 
+
+    def getDimSizes(self):
+        return self._dim_size
+
+    def getDimWidths(self):
+        return self._dim_width
         
     def _formatShape(self, arr):
         return 'x'.join([str(x) for x in arr])
@@ -108,6 +114,9 @@ class topoHyperX(Topology):
         
     
     def build(self, endpoint):
+        if self._check_first_build():
+            sst.addGlobalParams("params_%s"%self._instance_name, self._getGroupParams("main"))
+
         if self.host_link_latency is None:
             self.host_link_latency = self.link_latency
 
@@ -151,7 +160,7 @@ class topoHyperX(Topology):
 
             topology = rtr.setSubComponent(self.router.getTopologySlotName(),"merlin.hyperx")
             self._applyStatisticsSettings(topology)
-            topology.addParams(self._getGroupParams("main"))
+            topology.addGlobalParamSet("params_%s"%self._instance_name)
 
             port = 0
             # Connect to all routers that only differ in one location index

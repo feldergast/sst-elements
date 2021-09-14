@@ -1,10 +1,10 @@
 // Copyright 2009-2021 NTESS. Under the terms
 // of Contract DE-NA0003525 with NTESS, the U.S.
 // Government retains certain rights in this software.
-// 
+//
 // Copyright (c) 2009-2021, NTESS
 // All rights reserved.
-// 
+//
 // Portions are copyright of other developers:
 // See the file CONTRIBUTORS.TXT in the top level directory
 // the distribution for more information.
@@ -66,7 +66,7 @@ topo_hyperx::topo_hyperx(ComponentId_t cid, Params& params, int num_ports, int r
     // output.output("Local port start = %d\n",local_port_start);
     // std::cout << local_port_start << std::endl;
     // std::cout << num_local_ports << std::endl;
-    
+
 
     int needed_ports = local_port_start + num_local_ports;
     // std::cout << needed_ports << std::endl;
@@ -85,7 +85,7 @@ topo_hyperx::topo_hyperx(ComponentId_t cid, Params& params, int num_ports, int r
     if ( params.is_value_array("algorithm") ) {
         params.find_array<std::string>("algorithm", vn_route_algos);
         if ( vn_route_algos.size() != num_vns ) {
-            fatal(CALL_INFO, -1, "ERROR: When specifying routing algorithms per VN, algorithm list length must match number of VNs (%d VNs, %lu algorithms).\n",num_vns,vn_route_algos.size());        
+            fatal(CALL_INFO, -1, "ERROR: When specifying routing algorithms per VN, algorithm list length must match number of VNs (%d VNs, %lu algorithms).\n",num_vns,vn_route_algos.size());
         }
     }
     else {
@@ -93,8 +93,52 @@ topo_hyperx::topo_hyperx(ComponentId_t cid, Params& params, int num_ports, int r
         for ( int i = 0; i < num_vns; ++i ) vn_route_algos.push_back(route_algo);
     }
 
+    // Need to initialize reachable_routers_in_dim data structure.  We
+    // start by being able to reach all routers.  If failed links are
+    // configured, then we will mark the appropriate routers as
+    // unreachable (at least with only one or two hops).
+
+    for ( int i = 0; i < local_port_start; ++ i ) {
+        reachable_routers_in_dim.push_back(0xFFFFFFFFFFFFFFFFl);
+    }
+
+    // Check to see if we are simulating with failed links
+    config_failed_links = params.find<bool>("config_failed_links","false");
+
+    if ( config_failed_links ) {
+        std::vector<Hyperx::FailedLink> failed_links;
+        params.find_array<Hyperx::FailedLink>("failed_links", failed_links);
+
+        // Need to check and see if any of the failed links affect me
+
+        for ( auto x : failed_links ) {
+            int dim = x.isMatch(id_loc);
+            if ( dim == -1 ) continue;
+            int low = x.info.low_index;
+            int high = x.info.high_index;
+            int slice = x.info.slice;
+
+            // We have a failure in one of our dimensions.  Figure out
+            // what port if is.  First check to see if I'm directly
+            // affected i.e. one of my ports has a failed link
+            if ( low == id_loc[dim] ) {
+                reachable_routers_in_dim[get_port_for_dim_index(dim, high, slice)] = 0;
+            }
+            else if ( high == id_loc[x.dimension] ) {
+                reachable_routers_in_dim[get_port_for_dim_index(dim, low, slice)] = 0;
+            }
+            else {
+                // low_index is not reachable through high_index and
+                // high_index is not reachable through low_index
+                reachable_routers_in_dim[get_port_for_dim_index(dim,low,slice)] &= ~(1 << high);
+                reachable_routers_in_dim[get_port_for_dim_index(dim,high,slice)] &= ~(1 << low);
+            }
+        }
+    }
+
     // Setup the routing algorithms
     int curr_vc = 0;
+    bool unsupported_routing_with_failed_links = false;
     for ( int i = 0; i < num_vns; ++i ) {
         vns[i].start_vc = curr_vc;
         if ( !vn_route_algos[i].compare("DOAL") ) {
@@ -103,6 +147,7 @@ topo_hyperx::topo_hyperx(ComponentId_t cid, Params& params, int num_ports, int r
             vns[i].num_vcs = 2;
         }
         else if ( !vn_route_algos[i].compare("valiant") ) {
+            unsupported_routing_with_failed_links = true;
             vns[i].algorithm = VALIANT;
             vns[i].num_vcs = 2;
         }
@@ -111,39 +156,45 @@ topo_hyperx::topo_hyperx(ComponentId_t cid, Params& params, int num_ports, int r
             vns[i].num_vcs = 2 * dimensions;
         }
         else if ( !vn_route_algos[i].compare("DOR-ND") ) {
+            unsupported_routing_with_failed_links = true;
             vns[i].algorithm = DORND;
             vns[i].num_vcs = 1;
         }
         else if ( !vn_route_algos[i].compare("DOR") ) {
+            unsupported_routing_with_failed_links = true;
             vns[i].algorithm = DOR;
             vns[i].num_vcs = 1;
         }
         else if ( !vn_route_algos[i].compare("MIN-A") ) {
+            unsupported_routing_with_failed_links = false;
             vns[i].algorithm = MINA;
-            vns[i].num_vcs = dimensions;
+            vns[i].num_vcs = dimensions + (config_failed_links ? 1 : 0);
         }
         else {
             output.fatal(CALL_INFO,-1,"Unknown routing mode specified: %s\n",vn_route_algos[i].c_str());
         }
         curr_vc += vns[i].num_vcs;
+
+        if ( unsupported_routing_with_failed_links && config_failed_links ) {
+            output.fatal(CALL_INFO,-1,"Using unsupported routing mode with failed links turned on\n");
+        }
     }
-    
+
     rng = new RNG::XORShiftRNG(router_id+1);
     rng_func = new RNGFunc(rng);
-    
+
     total_routers = 1;
     for (int i = 0; i < dimensions; ++i ) {
         total_routers *= dim_size[i];
     }
 
-    
-    
+
+
 }
 
 topo_hyperx::~topo_hyperx()
 {
     delete [] vns;
-    delete [] id_loc;
     delete [] dim_size;
     delete [] dim_width;
     delete [] port_start;
@@ -159,7 +210,7 @@ topo_hyperx::route_packet(int port, int vc, internal_router_event* ev)
     routeDOR(port,vc,tt_ev);
 
     int vn = ev->getVN();
-    
+
     // Check the routing algorithm and call the right function
     if ( vns[vn].algorithm == DOR ) {
         return;
@@ -184,12 +235,12 @@ topo_hyperx::route_packet(int port, int vc, internal_router_event* ev)
     else if ( vns[vn].algorithm == VDAL ) {
         return routeVDAL(port,vc,tt_ev);
     }
-    
+
     // Look for opportunities to adaptively route
 
     // We will look at all the ports in unaligned dimensions and take
     // the least congested
-    
+
 
     return;
 }
@@ -209,7 +260,7 @@ topo_hyperx::process_input(RtrEvent* ev)
         idToLocation(mid, tt_ev->val_loc);
         tt_ev->val_route_dest = false;
     }
-    
+
     // Need to figure out what the hyperx address is for easier
     // routing.
     int rtr_id = get_dest_router(tt_ev->getDest());
@@ -234,7 +285,7 @@ void topo_hyperx::routeInitData(int port, internal_router_event* ev, std::vector
                 else break;
             }
         }
-        
+
         // Need to send in all the higher dimensions and to local
         // ports
         for ( int i = 0; i < num_local_ports; ++i ) {
@@ -253,7 +304,7 @@ void topo_hyperx::routeInitData(int port, internal_router_event* ev, std::vector
         routeDOR(port, 0, static_cast<topo_hyperx_event*>(ev));
         outPorts.push_back(ev->getNextPort());
     }
-    
+
 }
 
 
@@ -278,13 +329,16 @@ topo_hyperx::getPortState(int port) const
             return R2N;
         return UNCONNECTED;
     }
-
+    if ( reachable_routers_in_dim[port] == 0 ) {
+        return FAILED;
+    }
     return R2R;
 }
 
 // rtr_id is a router id
 void
-topo_hyperx::idToLocation(int rtr_id, int *location) const
+// topo_hyperx::idToLocation(int rtr_id, int *location) const
+topo_hyperx::idToLocation(int rtr_id, int* location) const
 {
 	for ( int i = dimensions - 1; i > 0; i-- ) {
 		int div = 1;
@@ -399,7 +453,7 @@ topo_hyperx::routeDOR(int port, int vc, topo_hyperx_event* ev) {
     ev->setNextPort(p);
     ev->setVC(vc);
     return;
-    
+
 }
 
 void
@@ -426,7 +480,7 @@ topo_hyperx::routeDORND(int port, int vc, topo_hyperx_event* ev) {
     ev->setNextPort(min_port);
     ev->setVC(vc);
     return;
-    
+
 }
 
 void
@@ -464,6 +518,141 @@ topo_hyperx::routeValiant(int port, int vc, topo_hyperx_event* ev) {
     return;
 }
 
+// // Base function for routing in dimension order.  The extra parameters
+// // are:
+// //
+// // 1 - start_vc: this is the vc that represents VC0 as far as the
+// // routing algorithm is concerned.  It is passed in so that another
+// // routing algorithm can switch to this one in certain cases.  For
+// // these instances, the base VC to be used for DOR routing may not be
+// // the actual base of the VN.
+// //
+// // 2 - prefer_min: if set to true, will only route non-minimally if it
+// // can't route minimally because of failed links.
+// //
+// // 3 - allow_min_adaptive: if true, algorithm will choose adaptively
+// // between available slices for min routes.  If false, it will use a
+// // hash to pick the slice.  Ignored if prefer_min is false (i.e., if
+// // full adaptive routing is on, you will always route adaptively on
+// // the min paths).
+// void
+// topo_hyperx::routeDorBase(int port, int vc, topo_hyperx_event* ev, int start_vc, bool prefer_min, bool allow_min_adaptive) {
+//     // We still have to go in dimension order, but we can adaptively
+//     // route once in each dimension.
+//     int dest_router = get_dest_router(ev->getDest());
+//     if ( dest_router == router_id ) {
+//         ev->setNextPort(get_dest_local_port(ev->getDest()));
+//         return;
+//     }
+
+//     // Find the dimension to route in
+//     int dim;
+//     for ( dim = 0 ; dim < dimensions ; dim++ ) {
+//         if ( ev->dest_loc[dim] != id_loc[dim] ) break;
+//     }
+
+//     // Found the dimension to route in.  See if we have
+//     // already adaptively routed, if so, then we have to go
+//     // direct for this dimension.
+//     if ( ( vc - start_vc ) == 1 || prefer_min ) {
+//         // Get offset in the dimension
+//         int offset = ev->dest_loc[dim] - ((ev->dest_loc[dim] > id_loc[dim]) ? 1 : 0);
+//         offset *= dim_width[dim];
+
+//         // Choose the least loaded route to the next router
+//         int min = 0x7FFFFFFF;
+//         int min_port = -1;
+
+//         for ( int p = port_start[dim] + offset; p < port_start[dim] + offset + dim_width[dim]; ++p ) {
+//             // See if this is a failed port, if so skip it
+//             if ( reachable_routers_in_dim[p] == 0 ) continue;
+//             int weight = output_queue_lengths[p * num_vcs + vc];
+//             if ( weight < min ) {
+//                 min = weight;
+//                 min_port = p;
+//             }
+//         }
+
+//         // If we found a valid port, route packet and return
+//         if ( min_port != -1 ) {
+//             ev->setNextPort(min_port);
+//             ev->setVC(vc - 1);
+//             ev->last_routing_dim = dim;
+//             return;
+//         }
+
+//         // Didn't find a valid port (or we would have returned above).
+//         // Two options: if we already adaptively routed in this
+//         // dimension, then we ended up at a dead end and the routing
+//         // algorithm didn't work right.  If we haven't adaptively
+//         // routed in this dimension, then we just preferred minimal,
+//         // but ran into a failed link, so we can adaptively route
+//         // around it.
+//         if ( UNLIKELY( (vc - start_vc) == 1) ) {
+//             output.fatal(CALL_INFO, -1, "INERNAL ERROR: Routed to a dead end\n");
+//         }
+//     }
+
+//     // We are allowed to route adaptively
+
+//     // Just entered this dimension, we can adaptively route.  Need to
+//     // find out which link is best to take.  Weight all non-minimal
+//     // links by multiplying by 2 and keep the port with the lowest
+//     // value
+//     int min_port = -1;
+//     int min_weight = 0x7fffffff;
+//     int min_vc = vc;
+//     for ( int curr_port = port_start[dim]; curr_port < port_start[dim] + ((dim_size[dim] - 1) * dim_width[dim]); ++curr_port  ) {
+//         // See if this is a minimal route
+
+//         // Compute the base offset in this dimension for
+//         // the minimal route (this is essentially what the
+//         // offset would be if the width in this dimension
+//         // is 1).
+//         int offset = ev->dest_loc[dim] - ((ev->dest_loc[dim] > id_loc[dim]) ? 1 : 0);
+
+//         // Now get the actual starting port for the minimal link(s)
+//         offset = port_start[dim] + ( offset * dim_width[dim]);
+//         if ( curr_port >= offset && curr_port < offset + dim_width[dim] ) {
+//             // Check to see if this route is failed.  Is so, skip it.
+//             if ( reachable_routers_in_dim[curr_port] == 0 ) continue;
+
+//             // This is a minimal route.  We would use VC 0
+//             // in the VN, which is the VC the packet came
+//             // in on
+//             int weight = output_queue_lengths[curr_port * num_vcs + vc];
+//             if ( weight < min_weight ) {
+//                 min_weight = weight;
+//                 min_port = curr_port;
+//                 min_vc = vc;
+//             }
+//         }
+//         else {
+//             // Need to see if the final dimension for this
+//             // router is reachable through this port
+//             if ( !((reachable_routers_in_dim[curr_port] >> ev->dest_loc[dim]) & 0x1ul) ) continue;
+//             // This is a non-minimal route.  We would use
+//             // VC 1 in the VN, which is one greater than
+//             // the VC the packet came in on
+//             int weight = 2 * output_queue_lengths[curr_port * num_vcs + vc + 1] + 1;
+//             if ( weight < min_weight ) {
+//                 min_weight = weight;
+//                 min_port = curr_port;
+//                 min_vc = vc + 1;
+//             }
+//         }
+//     }
+//     if ( UNLIKELY(min_port == -1) ) {
+//         output.fatal(CALL_INFO, -1, "INTERNAL ERROR: Routed to a dead end\n");
+//     }
+//     // Route on the minimally weighted port
+//     ev->setNextPort(min_port);
+//     ev->setVC(min_vc);
+//     ev->last_routing_dim = dim;
+//     return;
+// }
+
+
 void
 topo_hyperx::routeDOAL(int port, int vc, topo_hyperx_event* ev) {
     // We still have to go in dimension order, but we can adaptively
@@ -483,12 +672,14 @@ topo_hyperx::routeDOAL(int port, int vc, topo_hyperx_event* ev) {
                 // Get offset in the dimension
                 int offset = ev->dest_loc[dim] - ((ev->dest_loc[dim] > id_loc[dim]) ? 1 : 0);
                 offset *= dim_width[dim];
-                
+
                 // Choose the least loaded route to the next router
                 int min = 0x7FFFFFFF;
-                int min_port;
-                
+                int min_port = -1;
+
                 for ( int p = port_start[dim] + offset; p < port_start[dim] + offset + dim_width[dim]; ++p ) {
+                    // See if this is a failed port, if so skip it
+                    if ( reachable_routers_in_dim[p] == 0 ) continue;
                     int weight = output_queue_lengths[p * num_vcs + vc];
                     if ( weight < min ) {
                         min = weight;
@@ -496,6 +687,9 @@ topo_hyperx::routeDOAL(int port, int vc, topo_hyperx_event* ev) {
                     }
                 }
 
+                if ( UNLIKELY(min_port == -1) ) {
+                    output.fatal(CALL_INFO, -1, "INTERNAL ERROR: Routed to a dead end\n");
+                }
                 ev->setNextPort(min_port);
                 ev->setVC(vc - 1);
 
@@ -507,21 +701,24 @@ topo_hyperx::routeDOAL(int port, int vc, topo_hyperx_event* ev) {
                 // route.  Need to find out which link is best to
                 // take.  Weight all non-minimal links by multiplying
                 // by 2 and keep the port with the lowest value
-                int min_port = 0;
+                int min_port = -1;
                 int min_weight = 0x7fffffff;
                 int min_vc = vc;
                 for ( int curr_port = port_start[dim]; curr_port < port_start[dim] + ((dim_size[dim] - 1) * dim_width[dim]); ++curr_port  ) {
                     // See if this is a minimal route
-                    
+
                     // Compute the base offset in this dimension for
                     // the minimal route (this is essentially what the
                     // offset would be if the width in this dimension
                     // is 1).
                     int offset = ev->dest_loc[dim] - ((ev->dest_loc[dim] > id_loc[dim]) ? 1 : 0);
-                    
+
                     // Now get the actual starting port for the minimal link(s)
                     offset = port_start[dim] + ( offset * dim_width[dim]);
                     if ( curr_port >= offset && curr_port < offset + dim_width[dim] ) {
+                        // Check to see if this route is failed.  Is so, skip it.
+                        if ( reachable_routers_in_dim[curr_port] == 0 ) continue;
+
                         // This is a minimal route.  We would use VC 0
                         // in the VN, which is the VC the packet came
                         // in on
@@ -533,6 +730,9 @@ topo_hyperx::routeDOAL(int port, int vc, topo_hyperx_event* ev) {
                         }
                     }
                     else {
+                        // Need to see if the final dimension for this
+                        // router is reachable through this port
+                        if ( !((reachable_routers_in_dim[curr_port] >> ev->dest_loc[dim]) & 0x1ul) ) continue;
                         // This is a non-minimal route.  We would use
                         // VC 1 in the VN, which is one greater than
                         // the VC the packet came in on
@@ -543,6 +743,9 @@ topo_hyperx::routeDOAL(int port, int vc, topo_hyperx_event* ev) {
                             min_vc = vc + 1;
                         }
                     }
+                }
+                if ( UNLIKELY(min_port == -1) ) {
+                    output.fatal(CALL_INFO, -1, "INTERNAL ERROR: Routed to a dead end\n");
                 }
                 // Route on the minimally weighted port
                 ev->setNextPort(min_port);
@@ -556,7 +759,6 @@ topo_hyperx::routeDOAL(int port, int vc, topo_hyperx_event* ev) {
 
 void
 topo_hyperx::routeMINA(int port, int vc, topo_hyperx_event* ev) {
-
     // Check to see if we made it to the dest router
     int dest_router = get_dest_router(ev->getDest());
     if ( dest_router == router_id ) {
@@ -565,34 +767,105 @@ topo_hyperx::routeMINA(int port, int vc, topo_hyperx_event* ev) {
     }
 
     // We can route in any unaligned dimension, but we have to take
-    // only minimal routes
+    // only minimal routes.  The one exception to this is if there are
+    // not minimal routes due to failed links.
+
+    // We need a number of VCs equal to the number of dimensions for
+    // normal routing, but need an extra VC if there are failed
+    // routes.
+
+    // To compute route VC with no failed links:
+    // route VC = total VCs - unaligned dimensions
+
+    // To compute route VC with failed links:
+    // route VC = total VCs - unaligned dimensions - 1
+
+    // Misroutes due to failed links will use the highest numbered VC.
+    // This is guaranteed to be deadlock free as long as you route on
+    // the highest VC on the first misroute in a dimension and then
+    // route the normal VC when aligning with the dest in that
+    // dimension.
+
 
     int vn = ev->getVN();
-    // If this is just coming into the network from and endpoint, we
-    // need to set the vc to -1 in order for the logic below to work
-    int vc_in_vn = port >= local_port_start ? -1 : vc - vns[vn].start_vc;
 
-    int min_weight = 0x7fffffff;;
+    // If I came in on the highest VC, then I non-minimally routed
+    // last time and need to route minimally this time in the same
+    // dimension.
+    bool must_min_route = false;
+    if ( (vc == vns[vn].start_vc + vns[vn].num_vcs - 1) && config_failed_links ) must_min_route = true;
+
+    // Get the unaligned dimensions
+    std::vector<int> udims;
+
+    // Check to see if we have to minimally route in specific
+    // dimension, skip all others.  If this is the case, there will
+    // always be a min route to the proper index because it was
+    // checked at the last hop using reachable_routers_in_dim.
+    if ( must_min_route ) udims.push_back(ev->last_routing_dim);
+    else ev->getUnalignedDimensions(id_loc,udims);
+
+
+    // Calculate the vc to route on based on number of unaligned
+    // dimensions
+    int route_vc = vns[vn].start_vc + vns[vn].num_vcs - udims.size() - (config_failed_links ? 1 : 0);
+
+    int min_weight = 0x7fffffff;
     int min_port = -1;
-    for ( int dim = 0; dim < dimensions; ++dim ) {
-        if ( ev->dest_loc[dim] == id_loc[dim] ) continue;
-
+    int routing_dim = -1;
+    for ( auto dim : udims ) {
         // Find the minimum weight, minimally-routed port
         int offset = ev->dest_loc[dim] - ((ev->dest_loc[dim] > id_loc[dim]) ? 1 : 0);
-        offset = port_start[dim] + (offset * dim_width[dim]);
+        offset *= dim_width[dim];
 
-        for ( int i = offset; i < offset + dim_width[dim]; ++i ) {
-            int weight = output_queue_lengths[(i * num_vcs) + vns[vn].start_vc + vc_in_vn + 1];
+        for ( int p = port_start[dim] + offset; p < port_start[dim] + offset + dim_width[dim]; ++p ) {
+            if ( reachable_routers_in_dim[p] == 0 ) continue;
+            int weight = output_queue_lengths[(p * num_vcs) + route_vc];
             if ( weight < min_weight ) {
-                min_port = i;
+                min_port = p;
                 min_weight = weight;
+                routing_dim = dim;
             }
         }
     }
+
+    if ( min_port != -1 ) {
+        // Route on the minimally weighted port
+        ev->setNextPort(min_port);
+        ev->setVC(route_vc);
+        ev->last_routing_dim = routing_dim;
+        return;
+    }
+
+    printf("Need to route non-minimal with udims.size() = %zu\n",udims.size());
+    // No minimal link found due to failed links.  Look at valiant routes
+    route_vc = vns[vn].start_vc + vns[vn].num_vcs - 1;
+
+    for ( auto dim : udims ) {
+
+        // We won't need to differentiate between minimal and
+        // non-minimal because we know there are no minimal routes
+        // available.  Checking the reachable flags will tell us this.
+        // We also don't need to multiple by 2 for the same reason.
+        for ( int curr_port = port_start[dim]; curr_port < port_start[dim] + ((dim_size[dim] - 1) * dim_width[dim]); ++curr_port  ) {
+            // Check to see if this route is failed.  Is so, skip it.
+            if ( !((reachable_routers_in_dim[curr_port] >> ev->dest_loc[dim]) & 0x1ul) ) continue;
+
+            int weight = output_queue_lengths[curr_port * num_vcs + route_vc];
+            if ( weight < min_weight ) {
+                min_weight = weight;
+                min_port = curr_port;
+                routing_dim = dim;
+            }
+        }
+    }
+    if ( UNLIKELY(min_port == -1) ) {
+        output.fatal(CALL_INFO, -1, "INTERNAL ERROR: Routed to a dead end\n");
+    }
     // Route on the minimally weighted port
     ev->setNextPort(min_port);
-    ev->setVC(vns[vn].start_vc + vc_in_vn + 1);
-
+    ev->setVC(route_vc);
+    ev->last_routing_dim = routing_dim;
 }
 
 
@@ -602,14 +875,13 @@ topo_hyperx::routeVDAL(int port, int vc, topo_hyperx_event* ev) {
     int dest_router = get_dest_router(ev->getDest());
     if ( dest_router == router_id ) {
         ev->setNextPort(get_dest_local_port(ev->getDest()));
-        // trace.getOutput().output("Made it to dest router\n");
         return;
     }
 
     // Not there yet, need to figure out what dimensions we can
     // route in (we will not route in an aligned dimension)
     int vn = ev->getVN();
-    
+
     // Get the unaligned dimensions
     std::vector<int> udims;
     ev->getUnalignedDimensions(id_loc,udims);
@@ -621,11 +893,14 @@ topo_hyperx::routeVDAL(int port, int vc, topo_hyperx_event* ev) {
 
 
     // Check to see if there are extra VCs for misroutes.  If not,
-    // simply fall back to MIN-A routing
-    if ( udims.size() == vns[vn].num_vcs - vc_in_vn - 1 ) {
+    // simply fall back to MIN-A routing.  The math here will also
+    // catch the case where the packet came in on the highest VC
+    // because of a failed link which fell back to routeMINA.
+    int remaining_vcs = vns[vn].num_vcs - vc_in_vn - 1 - (config_failed_links ? 1 : 0);
+    if ( udims.size() >= remaining_vcs ) {
         return routeMINA(port,vc,ev);
     }
-    
+
     // We'll look across all possible routes and take the minimum
     // weight route.  There are two constraints: First, we don't route
     // in an aligned dimension.  Second, we can't take two non-minimal
@@ -653,10 +928,19 @@ topo_hyperx::routeVDAL(int port, int vc, topo_hyperx_event* ev) {
                 offset++;
                 continue;
             }
-            
+
             for ( int link = 0; link < dim_width[dim]; ++link ) {
                 // int index = port_start[dim] + ((offset * dim_width[dim]) * num_vcs) + next_vc;
                 int next_port = port_start[dim] + (offset * dim_width[dim]) + link;
+                // Check to see if port is failed
+                if ( reachable_routers_in_dim[next_port] == 0 ) continue;
+                // Check to see if the dest index in this dimension is
+                // reachable through this port.  If not, skip it
+                // because it will reduce options next hop and can
+                // lead to deadlock if this is the last unaligned
+                // dimension
+                if ( !((reachable_routers_in_dim[next_port] >> ev->dest_loc[dim]) & 0x1ul) ) continue;
+
                 int index = next_port * num_vcs + next_vc;
                 int weight;
                 if ( minimal ) {
@@ -676,7 +960,7 @@ topo_hyperx::routeVDAL(int port, int vc, topo_hyperx_event* ev) {
                 }
             }
             offset++;
-        }        
+        }
     }
     // Route on the minimally weighted port
 
@@ -692,8 +976,7 @@ topo_hyperx::routeVDAL(int port, int vc, topo_hyperx_event* ev) {
             break;
         }
     }
-    
+
     ev->setNextPort(min_port);
     ev->setVC(next_vc);
 }
-

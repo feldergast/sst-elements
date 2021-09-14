@@ -30,9 +30,9 @@ using namespace SST::Merlin;
 
 
 void
-RouteToGroup::init_write(const std::string& basename, int group_id, global_route_mode_t route_mode,
-                         const dgnflyParams& params, const std::vector<int64_t>& global_link_map,
-                         bool config_failed_links, const std::vector<FailedLink>& failed_links_vec)
+Dragonfly::RouteToGroup::init_write(const std::string& basename, int group_id, global_route_mode_t route_mode,
+                                    const Dragonfly::dgnflyParams& params, const std::vector<int64_t>& global_link_map,
+                                    bool config_failed_links, const std::vector<FailedLink>& failed_links_vec)
 {
     // Get a shared region
     data.initialize(basename+"group_to_global_port",
@@ -120,8 +120,8 @@ RouteToGroup::init_write(const std::string& basename, int group_id, global_route
 }
 
 void
-RouteToGroup::init(const std::string& basename, int group_id, global_route_mode_t route_mode,
-                   const dgnflyParams& params, bool config_failed_links)
+Dragonfly::RouteToGroup::init(const std::string& basename, int group_id, global_route_mode_t route_mode,
+                               const dgnflyParams& params, bool config_failed_links)
 {
     data.initialize(basename+"group_to_global_port");
     data.publish();
@@ -148,14 +148,14 @@ RouteToGroup::init(const std::string& basename, int group_id, global_route_mode_
 
 
 
-const RouterPortPair&
-RouteToGroup::getRouterPortPair(int group, int route_number) const
+const Dragonfly::RouterPortPair&
+Dragonfly::RouteToGroup::getRouterPortPair(int group, int route_number) const
 {
     return getRouterPortPairForGroup(gid,group,route_number);
 }
 
-const RouterPortPair&
-RouteToGroup::getRouterPortPairForGroup(uint32_t src_group, uint32_t dest_group, uint32_t slice) const
+const Dragonfly::RouterPortPair&
+Dragonfly::RouteToGroup::getRouterPortPairForGroup(uint32_t src_group, uint32_t dest_group, uint32_t slice) const
 {
     // Look up global port to use
     switch ( mode ) {
@@ -178,7 +178,7 @@ RouteToGroup::getRouterPortPairForGroup(uint32_t src_group, uint32_t dest_group,
 }
 
 int
-RouteToGroup::getValiantGroup(int dest_group, RNG::SSTRandom* rng) const
+Dragonfly::RouteToGroup::getValiantGroup(int dest_group, RNG::SSTRandom* rng) const
 {
     if ( !consider_failed_links )  {
         int group;
@@ -243,8 +243,8 @@ topo_dragonfly::topo_dragonfly(ComponentId_t cid, Params &p, int num_ports, int 
     router_id = rtr_id % params.a;
 
     std::string global_route_mode_s = p.find<std::string>("global_route_mode","absolute");
-    if ( global_route_mode_s == "absolute" ) global_route_mode = ABSOLUTE;
-    else if ( global_route_mode_s == "relative" ) global_route_mode = RELATIVE;
+    if ( global_route_mode_s == "absolute" ) global_route_mode = Dragonfly::ABSOLUTE;
+    else if ( global_route_mode_s == "relative" ) global_route_mode = Dragonfly::RELATIVE;
     else {
         output.fatal(CALL_INFO, -1, "Invalid global_route_mode specified: %s.\n",global_route_mode_s.c_str());
     }
@@ -273,8 +273,8 @@ topo_dragonfly::topo_dragonfly(ComponentId_t cid, Params &p, int num_ports, int 
         std::vector<int64_t> global_link_map;
         p.find_array<int64_t>("global_link_map", global_link_map);
 
-        std::vector<FailedLink> failed_links;
-        p.find_array<FailedLink>("failed_links", failed_links);
+        std::vector<Dragonfly::FailedLink> failed_links;
+        p.find_array<Dragonfly::FailedLink>("failed_links", failed_links);
         group_to_global_port.init_write("network_", group_id, global_route_mode, params, global_link_map,
                                         config_failed_links, failed_links);
     }
@@ -979,7 +979,7 @@ void topo_dragonfly::routeInitData(int port, internal_router_event* ev, std::vec
 
         if ( broadcast_to_groups ) {
             for ( int p = 0; p < (int)(params.g - 1); p++ ) {
-                const RouterPortPair& pair = group_to_global_port.getRouterPortPair(p,0);
+                const Dragonfly::RouterPortPair& pair = group_to_global_port.getRouterPortPair(p,0);
                 if ( pair.router == router_id ) outPorts.push_back((int)(pair.port));
             }
         }
@@ -1029,7 +1029,7 @@ Topology::PortState topo_dragonfly::getPortState(int port) const
     else if ( is_port_local_group(port) ) return R2R;
     else {
         // These are global ports, see if they are failed
-        if ( group_to_global_port.isFailedPort(RouterPortPair(router_id,port)) ) return FAILED;
+        if ( group_to_global_port.isFailedPort(Dragonfly::RouterPortPair(router_id,port)) ) return FAILED;
         else return R2R;
     }
 }
@@ -1095,9 +1095,9 @@ int32_t topo_dragonfly::router_to_group(uint32_t group)
 int32_t topo_dragonfly::hops_to_router(uint32_t group, uint32_t router, uint32_t slice)
 {
     int hops = 1;
-    const RouterPortPair& pair = group_to_global_port.getRouterPortPair(group,slice);
+    const Dragonfly::RouterPortPair& pair = group_to_global_port.getRouterPortPair(group,slice);
     if ( pair.router != router_id ) hops++;
-    const RouterPortPair& pair2 = group_to_global_port.getRouterPortPairForGroup(group, group_id, slice);
+    const Dragonfly::RouterPortPair& pair2 = group_to_global_port.getRouterPortPairForGroup(group, group_id, slice);
     if ( pair2.router != router ) hops++;
     return hops;
 }
@@ -1105,7 +1105,7 @@ int32_t topo_dragonfly::hops_to_router(uint32_t group, uint32_t router, uint32_t
 /* returns local router port if group can't be reached from this router */
 int32_t topo_dragonfly::port_for_group(uint32_t group, uint32_t slice, int id)
 {
-    const RouterPortPair& pair = group_to_global_port.getRouterPortPair(group,slice);
+    const Dragonfly::RouterPortPair& pair = group_to_global_port.getRouterPortPair(group,slice);
     if ( group_to_global_port.isFailedPort(pair) ) {
         // printf("******** Skipping failed port ********\n");
         return -1;
@@ -1123,7 +1123,7 @@ int32_t topo_dragonfly::port_for_group_init(uint32_t group, uint32_t slice)
 {
     // TraceFunction trace(CALL_INFO_LONG);
     // trace.output("Routing from group %d to group %u over slice %u\n",group_id,group,slice);
-    const RouterPortPair& pair = group_to_global_port.getRouterPortPair(group,slice);
+    const Dragonfly::RouterPortPair& pair = group_to_global_port.getRouterPortPair(group,slice);
     // trace.output("This maps to router %d and port %d\n",pair.router,pair.port);
 
     if ( pair.router == router_id ) {

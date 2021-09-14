@@ -90,6 +90,7 @@ libmerlin_la_SOURCES = \
 EXTRA_DIST = \
 	tests/testsuite_default_merlin.py \
 	tests/hyperx_128_test.py \
+	tests/hyperx_128_test_fl.py \
 	tests/dragon_128_test.py \
 	tests/dragon_72_test.py \
 	tests/fattree_128_test.py \
@@ -97,6 +98,7 @@ EXTRA_DIST = \
 	tests/torus_128_test.py \
 	tests/torus_5_trafficgen.py \
 	tests/torus_64_test.py \
+	tests/dragon_128_test.py \
 	tests/dragon_128_test_fl.py \
 	tests/dragon_128_platform_test.py \
 	tests/dragon_128_platform_test_cm.py \
