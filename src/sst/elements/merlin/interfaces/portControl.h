@@ -29,6 +29,8 @@
 
 #include <sst/core/statapi/stataccumulator.h>
 
+#include <sst/core/profile/componentProfileTool.h>
+
 #include <cstring>
 
 #include "sst/elements/merlin/router.h"
@@ -91,6 +93,10 @@ public:
     SST_ELI_DOCUMENT_SUBCOMPONENT_SLOTS(
         {"inspector_slot", "Network inspectors", "SST::Interfaces::SimpleNetwork::NetworkInspector" },
         {"arbitration", "Arbitration unit to use for output", "SST::Merlin::OutputArbitration" }
+    )
+
+    SST_ELI_DOCUMENT_PROFILE_POINTS(
+        {"route", "Profile the call to route", "SST::Profile::ComponentCodeSegmentProfileTool" }
     )
 
 private:
@@ -303,6 +309,7 @@ private:
     int congestion_events;
     int congestion_count_at_last_throttle;
 
+    Profile::ComponentCodeSegmentProfileTool::ProfilePoint* pp_route;
 public:
 
     void recvCtrlEvent(CtrlRtrEvent* ev);

@@ -308,6 +308,10 @@ hr_router::hr_router(ComponentId_t cid, Params& params) :
     }
 
     init_vcs();
+
+    // Set up profiling point
+    pp_arbitrate = registerProfilePoint<Profile::ComponentCodeSegmentProfileTool>("arbitrate");
+    pp_xbar_move = registerProfilePoint<Profile::ComponentCodeSegmentProfileTool>("xbar_move");
 }
 
 
@@ -404,10 +408,13 @@ hr_router::clock_handler(Cycle_t cycle)
 #if VERIFY_DECLOCKING
     arb->arbitrate(ports,in_port_busy,out_port_busy,progress_vcs,clocking);
 #else
+    if ( pp_arbitrate ) pp_arbitrate->codeSegmentStart();
     arb->arbitrate(ports,in_port_busy,out_port_busy,progress_vcs);
+    if ( pp_arbitrate ) pp_arbitrate->codeSegmentEnd();
 #endif
 
     // Move the events and decrement the busy values
+    if ( pp_xbar_move ) pp_xbar_move->codeSegmentStart();
     for ( int i = 0; i < num_ports; i++ ) {
         // if ( progress_vcs[i] != -1 ) {
         if ( progress_vcs[i] > -1 ) {
@@ -440,6 +447,7 @@ hr_router::clock_handler(Cycle_t cycle)
         if ( in_port_busy[i] != 0 ) in_port_busy[i]--;
         if ( out_port_busy[i] != 0 ) out_port_busy[i]--;
     }
+    if ( pp_xbar_move ) pp_xbar_move->codeSegmentEnd();
 
     return false;
 }

@@ -90,6 +90,11 @@ public:
         {"portcontrol", "PortControl blocks", "SST::Merlin::PortInterface" }
     )
 
+    SST_ELI_DOCUMENT_PROFILE_POINTS(
+        {"arbitrate", "Profile the call to arbitrate", "SST::Profile::ComponentCodeSegmentProfileTool" },
+        {"xbar_move", "Profile the moving of events across crossbar", "SST::Profile::ComponentCodeSegmentProfileTool" }
+    )
+
 private:
     static int num_routers;
     static int print_debug;
@@ -136,6 +141,8 @@ private:
     Output& output;
 
     Shared::SharedArray<int> shared_array;
+    Profile::ComponentCodeSegmentProfileTool::ProfilePoint* pp_arbitrate;
+    Profile::ComponentCodeSegmentProfileTool::ProfilePoint* pp_xbar_move;
 
 public:
     hr_router(ComponentId_t cid, Params& params);

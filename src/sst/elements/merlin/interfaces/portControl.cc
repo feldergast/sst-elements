@@ -125,7 +125,9 @@ PortControl::recv(int vc)
 	}
 	else {
         auto event = input_buf[vc].front();
+        if ( pp_route ) pp_route->codeSegmentStart();
         topo->route_packet(port_number, event->getVC(), event);
+        if ( pp_route ) pp_route->codeSegmentEnd();
 	    vc_heads[vc] = input_buf[vc].front();
 	}
 
@@ -251,7 +253,8 @@ PortControl::PortControl(ComponentId_t cid, Params& params,  Router* rif, int rt
     cm_activated(false),
     current_incast(0),
     total_flits_incoming(0),
-    total_incast_flits(0)
+    total_incast_flits(0),
+    pp_route(nullptr)
 {
     // Process the parameters
 
@@ -463,6 +466,10 @@ PortControl::PortControl(ComponentId_t cid, Params& params,  Router* rif, int rt
     }
 
     congestion_events = 0;
+
+    // Set up profiling point
+    pp_route = registerProfilePoint<Profile::ComponentCodeSegmentProfileTool>("route");
+
 }
 
 
