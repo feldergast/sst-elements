@@ -91,7 +91,7 @@ void PyMapper::mapGraph(LlyrGraph< opType > hardwareGraph, LlyrGraph< AppNode > 
     // TraceFunction trace(CALL_INFO_LONG);
     //setup up i/o for messages
     char prefix[256];
-    sprintf(prefix, "[t=@t][pyMapper]: ");
+    snprintf(prefix, 256, "[t=@t][pyMapper]: ");
     SST::Output* output_ = new SST::Output(prefix, llyr_config->verbosity_, 0, Output::STDOUT);
 
     if( llyr_config->mapping_tool_ == "" ) {

@@ -157,7 +157,7 @@ public:
 		iterations--;
 	}
 
-	bool isFinished() override{
+	bool isFinished() override {
 		return (0 == iterations);
 	}
 
